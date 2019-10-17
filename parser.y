@@ -565,6 +565,7 @@ import (
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin		"ADMIN"
 	buckets		"BUCKETS"
+	builtins    "BUILTINS"
 	cancel		"CANCEL"
 	cmSketch	"CMSKETCH"
 	ddl		"DDL"
@@ -610,6 +611,7 @@ import (
 	split		"SPLIT"
 	width		"WIDTH"
 	regions         "REGIONS"
+	region          "REGION"
 
 	builtinAddDate
 	builtinBitAnd
@@ -797,6 +799,7 @@ import (
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
 	CreateTableOptionListOpt	"create table option list opt"
 	CreateTableSelectOpt	        "Select/Union statement in CREATE TABLE ... SELECT"
+	CreateViewSelectOpt     "Select/Union statement in CREATE VIEW ... AS SELECT"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
@@ -953,6 +956,7 @@ import (
 	ShowProfileType			"Show profile type"
 	ShowProfileTypes		"Show profile types"
 	SplitOption			"Split Option"
+	SplitSyntaxOption		"Split syntax Option"
 	Starting			"Starting by"
 	StatementList			"statement list"
 	StatsPersistentVal		"stats_persistent value"
@@ -1128,6 +1132,7 @@ import (
 	logOr			"logical or operator"
 	LinearOpt		"linear or empty"
 	FieldsOrColumns 	"Fields or columns"
+	StorageMedia		"{DISK|MEMORY|DEFAULT}"
 
 %type	<ident>
 	ODBCDateTimeType		"ODBC type keywords for date and time literals"
@@ -1980,19 +1985,23 @@ RecoverTableStmt:
  *
  *******************************************************************/
 SplitRegionStmt:
-	"SPLIT" "TABLE" TableName SplitOption
+	"SPLIT" SplitSyntaxOption "TABLE" TableName PartitionNameListOpt SplitOption
 	{
 		$$ = &ast.SplitRegionStmt{
-			Table: $3.(*ast.TableName),
-			SplitOpt: $4.(*ast.SplitOption),
+			SplitSyntaxOpt: $2.(*ast.SplitSyntaxOption),
+			Table: $4.(*ast.TableName),
+			PartitionNames: $5.([]model.CIStr),
+			SplitOpt: $6.(*ast.SplitOption),
 		}
 	}
-|	"SPLIT" "TABLE" TableName "INDEX" Identifier SplitOption
+|	"SPLIT" SplitSyntaxOption "TABLE" TableName PartitionNameListOpt "INDEX" Identifier SplitOption
 	{
 		$$ = &ast.SplitRegionStmt{
-			Table: $3.(*ast.TableName),
-			IndexName: model.NewCIStr($5),
-			SplitOpt: $6.(*ast.SplitOption),
+			SplitSyntaxOpt: $2.(*ast.SplitSyntaxOption),
+			Table: $4.(*ast.TableName),
+			PartitionNames: $5.([]model.CIStr),
+			IndexName: model.NewCIStr($7),
+			SplitOpt: $8.(*ast.SplitOption),
 		}
 	}
 
@@ -2009,6 +2018,31 @@ SplitOption:
 	{
 		$$ = &ast.SplitOption{
 			ValueLists: $2.([][]ast.ExprNode),
+		}
+	}
+
+SplitSyntaxOption:
+	/* empty */
+	{
+		$$ = &ast.SplitSyntaxOption{}
+	}
+|	"REGION" "FOR"
+	{
+		$$ = &ast.SplitSyntaxOption{
+			HasRegionFor: true,
+		}
+	}
+|	"PARTITION"
+	{
+		$$ = &ast.SplitSyntaxOption{
+			HasPartition: true,
+		}
+	}
+|	"REGION" "FOR" "PARTITION"
+	{
+		$$ = &ast.SplitSyntaxOption{
+			HasRegionFor: true,
+			HasPartition: true,
 		}
 	}
 
@@ -2402,6 +2436,15 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionColumnFormat, StrValue: $2.(string)}
 	}
+|	"STORAGE" StorageMedia
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionStorage, StrValue: $2}
+		yylex.AppendError(yylex.Errorf("The STORAGE clause is parsed but ignored by all storage engines."))
+		parser.lastErrorAsWarn()
+	}
+
+StorageMedia:
+	"DEFAULT" | "DISK" | "MEMORY"
 
 ColumnFormat:
 	"DEFAULT"
@@ -3318,6 +3361,27 @@ CreateTableSelectOpt:
 		$$ = &ast.CreateTableStmt{Select: $1}
 	}
 
+CreateViewSelectOpt:
+	SelectStmt
+	{
+		$$ = $1.(*ast.SelectStmt)
+	}
+|
+	UnionStmt
+	{
+		$$ = $1.(*ast.UnionStmt)
+	}
+|
+	'(' SelectStmt ')'
+	{
+		$$ = $2.(*ast.SelectStmt)
+	}
+|
+	'(' UnionStmt ')'
+	{
+		$$ = $2.(*ast.UnionStmt)
+	}
+
 LikeTableWithOrWithoutParen:
 	"LIKE" TableName
 	{
@@ -3338,10 +3402,10 @@ LikeTableWithOrWithoutParen:
  *          as select Col1,Col2 from table WITH LOCAL CHECK OPTION
  *******************************************************************/
 CreateViewStmt:
-    "CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" SelectStmt ViewCheckOption
+    "CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
     {
 		startOffset := parser.startOffset(&yyS[yypt-1])
-		selStmt := $10.(*ast.SelectStmt)
+		selStmt := $10.(ast.StmtNode)
 		selStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt {
  			OrReplace:     $2.(bool),
@@ -4355,9 +4419,9 @@ UnReservedKeyword:
 | "SQL_TSI_DAY" | "SQL_TSI_HOUR" | "SQL_TSI_MINUTE" | "SQL_TSI_MONTH" | "SQL_TSI_QUARTER" | "SQL_TSI_SECOND" | "SQL_TSI_WEEK" | "SQL_TSI_YEAR" | "INVISIBLE" | "VISIBLE" | "TYPE"
 
 TiDBKeyword:
- "ADMIN" | "AGG_TO_COP" |"BUCKETS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
+ "ADMIN" | "AGG_TO_COP" |"BUCKETS" | "BUILTINS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
 | "HASH_JOIN" | "SM_JOIN" | "INL_JOIN" | "HASH_AGG" | "STREAM_AGG" | "USE_INDEX" | "IGNORE_INDEX" | "USE_INDEX_MERGE" | "NO_INDEX_MERGE" | "USE_TOJA" | "ENABLE_PLAN_CACHE" | "USE_PLAN_CACHE"
-| "READ_CONSISTENT_REPLICA" | "READ_FROM_STORAGE" | "QB_NAME" | "QUERY_TYPE" | "MEMORY_QUOTA" | "OLAP" | "OLTP" | "TOPN" | "TIKV" | "TIFLASH" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "WIDTH" | "REGIONS"
+| "READ_CONSISTENT_REPLICA" | "READ_FROM_STORAGE" | "QB_NAME" | "QUERY_TYPE" | "MEMORY_QUOTA" | "OLAP" | "OLTP" | "TOPN" | "TIKV" | "TIFLASH" | "SPLIT" | "OPTIMISTIC" | "PESSIMISTIC" | "WIDTH" | "REGIONS" | "REGION"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
@@ -7491,16 +7555,24 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS"
+|	"ADMIN" "SHOW" "DDL" "JOBS" WhereClauseOptional
 	{
-		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+		stmt := &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+		if $5 != nil {
+			stmt.Where = $5.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS" NUM
+|	"ADMIN" "SHOW" "DDL" "JOBS" NUM WhereClauseOptional
 	{
-		$$ = &ast.AdminStmt{
+		stmt := &ast.AdminStmt{
 		    Tp: ast.AdminShowDDLJobs,
 		    JobNumber: $5.(int64),
 		}
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"ADMIN" "SHOW" TableName "NEXT_ROW_ID"
 	{
@@ -7871,6 +7943,12 @@ ShowStmt:
 			}
 		}
 		$$ = stmt
+	}
+|	"SHOW" "BUILTINS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBuiltins,
+		}
 	}
 
 ShowProfileTypesOpt:
@@ -8829,6 +8907,10 @@ FixedPointType:
 		$$ = mysql.TypeNewDecimal
 	}
 |	"NUMERIC"
+	{
+		$$ = mysql.TypeNewDecimal
+	}
+|	"FIXED"
 	{
 		$$ = mysql.TypeNewDecimal
 	}
