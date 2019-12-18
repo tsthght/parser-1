@@ -6701,8 +6701,6 @@ TableOptimizerHints:
 	}
 |	hintBegin error hintEnd
 	{
-		yyerrok()
-		parser.lastErrorAsWarn()
 		$$ = nil
 	}
 
