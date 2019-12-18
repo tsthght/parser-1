@@ -6699,6 +6699,10 @@ TableOptimizerHints:
 	{
 		$$ = $2
 	}
+|	hintBegin identifier hintEnd
+	{
+		$$ = nil
+	}
 |	hintBegin error hintEnd
 	{
 		$$ = nil
