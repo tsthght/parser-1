@@ -414,7 +414,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		comment := s.r.data(&pos)
 
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
-		if strings.HasPrefix(comment, "/*+") {
+		if strings.HasPrefix(comment, "/*+") && pos.Offset > 1 {
 			begin := sqlOffsetInComment(comment)
 			end := len(comment) - 2
 			sql := comment[begin:end]
